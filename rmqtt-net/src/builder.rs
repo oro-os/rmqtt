@@ -845,10 +845,10 @@ where
     /// Creates TCP protocol dispatcher
     #[inline]
     pub fn tcp(self) -> Result<Dispatcher<S>> {
-        if matches!(self.typ, ListenerType::TCP) {
+        if matches!(self.typ, ListenerType::TCP | ListenerType::SocketChannel) {
             Ok(Dispatcher::new(self.socket, self.remote_addr, None, self.cfg))
         } else {
-            Err(anyhow!("Protocol mismatch: Expected TCP listener"))
+            Err(anyhow!("Protocol mismatch: Expected TCP listener / receiver channel"))
         }
     }
 
