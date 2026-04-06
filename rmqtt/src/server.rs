@@ -200,6 +200,7 @@ impl MqttServer {
                 .iter()
                 .map(|(lid, l)| match l.typ {
                     ListenerType::TCP => listen_tcp(self.scx.clone(), l, *lid).boxed(),
+                    ListenerType::SocketChannel => listen_socket_channel(self.scx.clone(), l, *lid).boxed(),
                     #[cfg(feature = "tls")]
                     ListenerType::TLS => listen_tls(self.scx.clone(), l, *lid).boxed(),
                     #[cfg(feature = "ws")]
@@ -256,6 +257,51 @@ async fn listen_tcp(scx: ServerContext, l: &Listener, lid: ListenerId) {
             }
             Err(e) => {
                 log::info!("TCP listener error: {e:?}");
+                tokio::time::sleep(Duration::from_millis(1000)).await;
+            }
+        }
+    }
+}
+
+/// Handles incoming socket channel connections
+/// # Arguments
+/// * `scx` - Server context
+/// * `l` - TCP listener configuration
+async fn listen_socket_channel(scx: ServerContext, l: &Listener, lid: ListenerId) {
+    loop {
+        match l.accept_socket_channel().await {
+            Ok(accept) => {
+                let scx = scx.clone();
+                tokio::spawn(async move {
+                    log::debug!("TCP connection from {}", accept.remote_addr);
+
+                    let stream = match accept.tcp() {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!("TCP accept error: {e:?}");
+                            return;
+                        }
+                    };
+
+                    match stream.mqtt().await {
+                        Ok(MqttStream::V3(s)) => {
+                            if let Err(e) = v3::process(scx.clone(), s, lid).await {
+                                log::info!("MQTTv3 processing error: {e:?}");
+                            }
+                        }
+                        Ok(MqttStream::V5(s)) => {
+                            if let Err(e) = v5::process(scx.clone(), s, lid).await {
+                                log::info!("MQTTv5 processing error: {e:?}");
+                            }
+                        }
+                        Err(e) => {
+                            log::info!("MQTT version detection failed: {e:?}");
+                        }
+                    }
+                });
+            }
+            Err(e) => {
+                log::info!("Socket channel listener error: {e:?}");
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }

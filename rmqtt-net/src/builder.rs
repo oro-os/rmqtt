@@ -66,6 +66,8 @@ use rustls::{pki_types::pem::PemObject, server::WebPkiClientVerifier, RootCertSt
 use socket2::{Domain, SockAddr, Socket, Type};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::mpsc::Receiver;
+use tokio::sync::Mutex;
 #[cfg(feature = "tls")]
 use tokio_rustls::{server::TlsStream, TlsAcceptor};
 #[cfg(feature = "ws")]
@@ -506,6 +508,21 @@ impl Builder {
             typ: ListenerType::TCP,
             cfg: Arc::new(self),
             tcp_listener: Some(tcp_listener),
+            socket_receiver: None,
+            #[cfg(feature = "tls")]
+            tls_acceptor: None,
+            #[cfg(feature = "quic")]
+            quinn_endpoint: None,
+        })
+    }
+
+    /// Receives sockets from the given MPSC channel.
+    pub fn receive(self, receiver: Receiver<(TcpStream, SocketAddr)>) -> Result<Listener> {
+        Ok(Listener {
+            typ: ListenerType::SocketChannel,
+            cfg: Arc::new(self),
+            tcp_listener: None,
+            socket_receiver: Some(Mutex::new(receiver)),
             #[cfg(feature = "tls")]
             tls_acceptor: None,
             #[cfg(feature = "quic")]
@@ -532,6 +549,7 @@ impl Builder {
             typ: ListenerType::QUIC,
             cfg: Arc::new(self),
             tcp_listener: None,
+            socket_receiver: None,
             #[cfg(feature = "tls")]
             tls_acceptor: None,
             quinn_endpoint: Some(endpoint),
@@ -578,6 +596,8 @@ impl Builder {
 pub enum ListenerType {
     /// Plain TCP listener
     TCP,
+    /// Socket channel listener
+    SocketChannel,
     #[cfg(feature = "tls")]
     /// TLS-secured TCP listener
     TLS,
@@ -600,6 +620,7 @@ pub struct Listener {
     /// Shared server configuration
     pub cfg: Arc<Builder>,
     tcp_listener: Option<TcpListener>,
+    socket_receiver: Option<Mutex<Receiver<(TcpStream, SocketAddr)>>>,
     #[cfg(feature = "tls")]
     tls_acceptor: Option<TlsAcceptor>,
     #[cfg(feature = "quic")]
@@ -682,6 +703,9 @@ impl Listener {
             }
             ListenerType::TLS => return Ok(self),
             ListenerType::TCP => {}
+            ListenerType::SocketChannel => {
+                return Err(anyhow!("Protocol upgrade from SocketChannel to TLS is not permitted"));
+            }
         }
 
         let tls_config = self.cfg.build_tls_config()?;
@@ -696,15 +720,44 @@ impl Listener {
         if let Some(tcp_listener) = &self.tcp_listener {
             self.accept_tcp(tcp_listener).await
         } else {
-            Err(anyhow!(""))
+            Err(anyhow!("No TCP listener configured for accepting connections"))
+        }
+    }
+
+    /// Receives an incoming TCP connection from the socket channel
+    pub async fn accept_socket_channel(&self) -> Result<Acceptor<TcpStream>> {
+        if let Some(receiver) = &self.socket_receiver {
+            let Some((socket, remote_addr)) = ({
+                let mut lock = receiver.lock().await;
+                lock.recv().await
+            }) else {
+                return Err(anyhow!("Socket channel closed"));
+            };
+
+            if let Err(e) = socket.set_nodelay(self.cfg.nodelay) {
+                return Err(Error::from(e));
+            }
+
+            self.take_tcp(socket, remote_addr).await
+        } else {
+            Err(anyhow!("No socket channel configured for receiving connections"))
         }
     }
 
     async fn accept_tcp(&self, tcp_listener: &TcpListener) -> Result<Acceptor<TcpStream>> {
-        let (mut socket, mut remote_addr) = tcp_listener.accept().await?;
+        let (socket, remote_addr) = tcp_listener.accept().await?;
         if let Err(e) = socket.set_nodelay(self.cfg.nodelay) {
             return Err(Error::from(e));
         }
+
+        self.take_tcp(socket, remote_addr).await
+    }
+
+    pub async fn take_tcp(
+        &self,
+        mut socket: TcpStream,
+        mut remote_addr: SocketAddr,
+    ) -> Result<Acceptor<TcpStream>> {
         log::debug!("remote_addr: {remote_addr}, proxy_protocol: {}", self.cfg.proxy_protocol);
         if self.cfg.proxy_protocol {
             let mut buffer = [0u8; u16::MAX as usize];
