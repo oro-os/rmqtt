@@ -25,7 +25,7 @@ pub(super) fn decode_packet(mut src: Bytes, first_byte: u8) -> Result<Packet, De
         packet_type::PUBREC => Ok(Packet::PublishReceived(PublishAck::decode(&mut src)?)),
         packet_type::PUBREL => Ok(Packet::PublishRelease(PublishAck2::decode(&mut src)?)),
         packet_type::PUBCOMP => Ok(Packet::PublishComplete(PublishAck2::decode(&mut src)?)),
-        _ => Err(DecodeError::UnsupportedPacketType),
+        _ => Err(DecodeError::UnsupportedPacketType(first_byte)),
     }
 }
 

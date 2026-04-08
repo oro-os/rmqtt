@@ -79,7 +79,7 @@ impl Decoder for VersionCodec {
                         _ => Err(DecodeError::InvalidProtocol),
                     }
                 } else {
-                    Err(DecodeError::UnsupportedPacketType)
+                    Err(DecodeError::UnsupportedPacketType(first_byte))
                 }
             }
             None => Ok(None),

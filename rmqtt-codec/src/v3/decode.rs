@@ -28,7 +28,7 @@ pub(crate) fn decode_packet(mut src: Bytes, first_byte: u8) -> Result<Packet, De
         packet_type::PINGREQ => Ok(Packet::PingRequest),
         packet_type::PINGRESP => Ok(Packet::PingResponse),
         packet_type::DISCONNECT => Ok(Packet::Disconnect),
-        _ => Err(DecodeError::UnsupportedPacketType),
+        _ => Err(DecodeError::UnsupportedPacketType(first_byte)),
     }
 }
 

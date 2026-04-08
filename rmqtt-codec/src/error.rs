@@ -66,8 +66,8 @@ pub enum DecodeError {
     ConnAckReservedFlagSet,
     #[error("Invalid client id")]
     InvalidClientId,
-    #[error("Unsupported packet type")]
-    UnsupportedPacketType,
+    #[error("Unsupported packet type: {0}")]
+    UnsupportedPacketType(u8),
     // MQTT v3 only
     #[error("Packet id is required")]
     PacketIdRequired,
@@ -95,7 +95,7 @@ impl ToReasonCode for DecodeError {
             DecodeError::ConnectReservedFlagSet => DisconnectReasonCode::ProtocolError,
             DecodeError::ConnAckReservedFlagSet => DisconnectReasonCode::ProtocolError,
             DecodeError::InvalidClientId => DisconnectReasonCode::NotAuthorized,
-            DecodeError::UnsupportedPacketType => DisconnectReasonCode::ImplementationSpecificError,
+            DecodeError::UnsupportedPacketType(_) => DisconnectReasonCode::ImplementationSpecificError,
             DecodeError::PacketIdRequired => DisconnectReasonCode::ProtocolError,
             DecodeError::MaxSizeExceeded => DisconnectReasonCode::PacketTooLarge,
             DecodeError::Utf8Error => DisconnectReasonCode::PayloadFormatInvalid,
